@@ -1,58 +1,18 @@
-# forecastingFloodInundation
-Forecasting Flood Inundation modeling project for CPLN 675 at University of Pennsylvania, Spring 2022
 
+Deliverables:
 
-Basic procedure
-1.	Gather open data from both Calgary’s open data site and your comparable city’s open data site as well as other internet sources.
-2.	Using what we’ve learned about feature engineering over the first part of the semester, build as many useful variables describing the natural, hydrological and built environment features that might help explain flood inundation. You must include at least one feature from the watershed analysis. 
-3.	Join these features to the vector Fishnet. Remember that ‘distance or density to Feature A’ might describe the spatial relationship better than simply, ‘Feature A’.
-4.	Move your Fishnet dataset into R and run some logistic regressions with both a test set and a training set. Experiment until you find a model with enough statistically significant variables. 
-5.	Run goodness of fit metrics; More advanced groups (e.g. if you have taken MUSA 508) should experiment with spatial cross-validation. Visualize your results in chart and map form.
+1. ~3 page report (in pdf form) or knitted R Markdown document (in html form) due on Canvas,
 
-Deliverables 
-Your markdown or pdf report should contain the following:
-1.	The Planning motivation for your algorithm and how you would deploy such an algorithm (borrow from your memo).
-2.	One page showing four of your more original (as you deem it), yet statistically significant features. Annotate as you see fit. 4 maps on 1 page. This must include at least one watershed feature (even if it’s not significant).
-3.	One page with your final logistic regression model summary including your ROC curve, confusion metrics and associated goodness of fit/cross-validation. Annotate briefly. 
-4.	One page showing 3 maps – The first shows true positives, true negatives, false negatives and false positives for the training set in Calgary. Second, your inundation predictions for Calgary (entire dataset); Third, predictions for your comparable city.
+2. A youtube video, linked in your report or markdown, that annotates your project alongside visual outputs - this is designed to be a portfolio item for your use in the future.
 
-Training & Validation City:
-[Calgary](https://data.calgary.ca/)
+The purpose of this project is to estimate a predictive model that yields predictions in space interpreted as ‘the probability that an area will be inundated with flood water”. You will train and validate your model on the city of Calgary, Alberta (Canada) and then predict for a comparable city.
 
-Possible cities:
-- [Edmonton](https://data.edmonton.ca/)
-- [Pittsburgh](https://pittsburghpa.gov/open-data/index.html)
-- [Cincinnati](https://data.cincinnati-oh.gov/)
-- [St. Louis](https://www.stlouis-mo.gov/data/index.cfm)
-- Nashville
-- Memphis
+This is a big step up from our first two assignments - you are going to do statistical modeling in R. Please make use of your instructor and TA office hours and the in-class workshop time to get comfortable if this is your first time doing this kind of work.
 
-Data to collect:
-- Elevation (DEM)
-- Land Cover (impervious is more important)
-  - [National Land Cover Database](https://www.usgs.gov/centers/eros/science/national-land-cover-database)
-- Stream / River centerlines
-- Hydrology (width, depth, flow rate)
-- Building footprints
-- Existing floodplain maps
-- Soil data - grain size / soil texture
+To be clear, to do this analysis, you will copy the code from the land conservation markdown (predicting the probability of land conservation) and create new independent variables for a model that predicts probability of flood inundation. You can wrangle data in ArcGIS or R, it’s your choice, but your modeling will take place in R. Once you’ve trained your model on Calgary and are satisfied, you can use the ‘predict’ command to predict for your comparable city.
 
+You can work in teams of two. Sign up for a team in the teammate signup sheet below. If you have a person you’d prefer to work with, sign up as a team, otherwise just put your name on the sheet – either as Team Member 1 on a new team, or as Member 2 next to another solo student. If you can’t find a team (we might have an odd number of students), let me know and we will accommodate you in a team of three. If you would prefer to work alone, let me know.
 
-DEM analysis
-- slopes 
-- streams and tributaries
-- assigned weight based on stream order
-- distance accumulation from streams
+Access the teammate signup sheet hereLinks to an external site..
 
-Data Sources:
-|City|Feature|DataType|Use|DataLink|
-|----|----|----|----|----|
-|Calgary|DEM|Raster||[Link](https://data.calgary.ca/Base-Maps/Digital-Elevation-Model-DEM-ASCII-2M/eink-tu9p)|
-|Calgary|Elevation|||[Link]()|
-|Calgary|Slope|||[Link]()|
-|Calgary|SteepSlopes||||
-|Calgary|Dist_SteepSlopes||||
-|Calgary|LandCover|Vector||[Link](https://data.calgary.ca/resource/as2i-6z3n.json)|
-|Calgary|CommercialZones||||
-|Calgary|ResidentialZones||||
-|Calgary|IndustrialZones||||
+One team member should gather available features from Calgary, the other from your comparable city. You must stick to glm only (no fancy models!). You may wrangle data in either ArcGIS or R, but you will be doing your modeling in R.
