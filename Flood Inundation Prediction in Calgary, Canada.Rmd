@@ -1,0 +1,721 @@
+---
+title: "Flood Inundation Probability Forecast in Calgary, Canada"
+author: "Haobing Liu & Ling Chen"
+date: "2023-03-18"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: readable
+    highlight: monochrome
+---
+
+# Introduction
+
+Floods are one of the most devastating natural disasters, causing widespread damage to communities and infrastructure. As the frequency and intensity of extreme weather events increase, there is a growing need for effective flood risk management strategies. This is where flood inundation analysis comes in.
+
+[![Click picture to see our presentation video!](images/Screenshot%202023-03-29%20at%204.27.07%20AM.png)](https://www.youtube.com/watch?v=l8quCz-AnGw)
+
+Click the picture to see our [presentation video](https://www.youtube.com/watch?v=l8quCz-AnGw)🎉
+
+The purpose of this analysis is to create a predictive model that can estimate the likelihood of flooding in Calgary, Alberta, Canada, based on a range of factors that we have identified as being important. Then we use this model to predict the probability of flood inundation in a comparable city Pittsburgh, Pennsylvania, US, which helps us understand how our model might perform in different contexts.
+
+Ultimately, our goal is that this analysis will provide valuable insights into flood risk management, and help planners make more informed decisions about how to protect their communities from the devastating effects of flooding.
+
+![](images/Screenshot%202023-03-29%20at%202.55.40%20AM.png)
+
+# Motivation
+
+From the city of Calgary we can see that Calgary is at its greatest risk of flooding during spring and summer. Additionally, heavy rainfall on the melting snowpack in the Rocky Mountains combined with steep, rocky terrain caused rapid and intense flooding in southern-Alberta watersheds. Flooding disrupted businesses, damaged critical infrastructure and also led to power outages across Calgary.
+
+As a river city, it is important to prepare, respond and adapt to floods. Every spring, the city of Calgary actively monitor the rivers for flooding. They continuously improve the flood forecasting to provide citizens with the earliest possible warning.
+
+![](images/paste-8CF83BFF.png)
+
+Therefore, the information from this analysis can be used by city planners in Calgary to make informed decisions about land use, infrastructure development, and emergency preparedness. To deploy such an algorithm, we would first need to validate and refine the model using historical flood data and other relevant features. Once we have a model that fits well, we can use it to generate flood inundation maps for Calgary, and also the comparable city.
+
+```{r setup, include=FALSE,message = FALSE,cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+library(corrplot)
+library(corrr)
+library(FNN)
+library(ggcorrplot)
+library(gifski)
+library(grid)
+library(gridExtra)
+library(ggmap)
+library(ggpubr) 
+library(ggplot2)
+library(caret)
+library(ggpmisc)
+library(ggstance)
+library(gganimate)
+library(geojsonio)
+library(jtools) 
+library(knitr)
+library(kableExtra)
+library(stargazer)
+library(AICcmodavg)
+library(lubridate)
+library(leaflet)
+library(plotROC)
+library(pROC)
+library(rmarkdown)
+library(riem)
+library(RSocrata)
+library(sf)
+library(sp)
+library(spdep)
+library(spatstat)
+library(stargazer)
+library(tableHTML)
+library(tigris)
+library(tidycensus)
+library(tidyverse)
+library(viridis)
+library(magick)
+library(rgdal)
+library(reshape2)
+library(htmltools)
+```
+
+```{r}
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+options(scipen=999, tigris_class = "sf")
+
+mapTheme <- theme_nice() +
+  theme(axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank())
+```
+
+# Data
+
+In this project, we have access to four datasets that will inform our inundation analysis for Calgary.
+
+```{r}
+Boundary <- st_read("https://data.calgary.ca/resource/erra-cqp9.geojson") %>% st_union()
+```
+
+```{r}
+Rivers <- st_read("https://data.calgary.ca/resource/5fk8-xqeu.geojson")
+```
+
+```{r}
+water <- st_read("https://data.calgary.ca/resource/47bt-eefd.geojson") 
+```
+
+```{r first_plot, warning = FALSE, message = FALSE}
+leaflet() %>%
+  addTiles() %>%
+  addProviderTiles("Esri.WorldTerrain") %>%
+  setView(lng = -114.08165519085753, lat = 51.043599465458946, zoom = 9) %>%
+  addPolygons(data = Boundary, 
+              fillColor = "#08306B", 
+              fillOpacity = 0.2, 
+              weight = 0.3,
+              color = "transparent") %>%
+  addPolylines(data = Rivers, 
+               color = "#08306B",
+               weight = 1) %>%
+  addLegend("bottomright", 
+            title = "Legend",
+            colors = "#08306B",
+            labels = "Rivers",
+            opacity = 1) 
+```
+
+-   Hydrology
+
+The first dataset contains information on the hydrology of the city including water bodies and watercourses.
+
+-   DEM
+
+The DEM dataset, derived from aerial LiDAR, provides a highly accurate representation of ground surface topography with a 2m resolution.
+
+-   Citywide Land Cover
+
+The third dataset is a composite citywide land cover created from multiple city data sources in 2015. This dataset will provide most generalized delineation of Calgary lands through a spectrum of 'naturalness', and the landscape scale metric identifies whether landcover is natural, including NatCover, Permeable ground, Impermeable ground and StormPond.
+
+-   Soil Data
+
+Finally, we have access to soil data from the Alberta Soil Information Center, which will provide information on the types of soil materials in Calgary. This dataset will be useful for understanding how soil properties may affect water flow patterns.
+
+# Feature Engineering
+
+## In ArcGIS
+
+![](276301680063257_.pic.jpg)
+
+## Fishnet
+
+The fishnet is a spatial grid that is used to divide the study area (Calgary) into smaller, more manageable units. By doing this, we can more easily analyze and model flood inundation at a local level. We spatially join other features, such as distance to waterbody, slope degree, landcover permeability, and soil type, to the fishnet.
+
+```{r}
+final_fishnet <- st_read("/Users/paprika/Desktop/Courses/2023spring/CPLN 675 Land Use/assignment3/FFinal_Fishent/FFinal_Fishent.shp") %>% st_transform(crs = 4326)
+
+final_fishnet <- rename(final_fishnet, Mean_Distance_to_River = MEAN_1)  
+final_fishnet <- rename(final_fishnet, average_slope_degree = MEAN_12)
+final_fishnet <- rename(final_fishnet, landcover_scale = MEAN_12_13)
+final_fishnet <- rename(final_fishnet, soil_material = MEAN_12_17)
+final_fishnet <- rename(final_fishnet, Inundation = MAX)
+```
+
+## Dependent Variable
+
+Based on the satellite image with flood inundation, Calgary is receiving a certain amount of flood issues especially along the major hydrology, which are the Bow and Elbow Rivers. Specifically, 237 fishnet cells with darker color are areas with inundation.
+
+```{r}
+final_fishnet <- final_fishnet %>%
+  mutate(Inundation = as.factor(Inundation))
+
+ggplot()+
+  geom_sf(data = final_fishnet,
+          color = "white",
+          size = 1,
+          aes(fill = Inundation)) +
+  labs(title="Flood Inundation in Calgary, Canada",
+       fill="Inundation",
+       caption = "Data: Calgary Open Data") +
+  scale_fill_manual(values = c("#d3dbed", "#08306B"),
+                    labels = c("No Inundation","Inundation")) +
+  mapTheme
+```
+
+```{r}
+table(final_fishnet$Inundation=="1")
+```
+
+## Independent Variable
+
+We can hypothesize that the probability of a grid cell to flood is a function of the distance to rivers, slope degree, landcover permeability and soil materials.
+
+1.  **Distance to Rivers**
+
+    Built on a floodplain, Calgary is susceptible to flooding due to its proximity to the Bow and Elbow Rivers. Especially when heavy rainfall occurs in the region, the water from the mountains and surrounding areas flows into rivers, causing further inundation of low-lying areas of Calgary. Therefore, distance to rivers is a potential variable. In the visualization, the darker the color, the closer to the river. In general, except for several clusters in the north, the majority of the areas in Calgary are within 1,500 meters to rivers.
+
+    ```{r}
+    ggplot()+
+      geom_sf(data = final_fishnet,
+              aes(fill = Mean_Distance_to_River))+
+      labs(title="Average Distance to River",
+           fill="Distance(Meter)",
+           caption = "Data: Calgary Open Data") +
+      scale_fill_gradient(low = "#08306B", high = "#F7FBFF", guide = guide_colorbar(reverse = TRUE)) +
+      mapTheme
+    ```
+
+2.  **Average Slope Degree**
+
+    Topography also influences the potential of flooding. In areas with steep slopes or narrow valleys, it's more likely to have instant flooding as the water moves faster. In the visualization, the darker the color, the steeper the terrain. In Calgary, the west part of Bow River has a higher slope. Specifically, the north-west part of Calgary shows a relatively steeper slope compared to the region.
+
+    ```{r}
+    ggplot()+
+      geom_sf(data = final_fishnet,
+              aes(fill = average_slope_degree))+
+      labs(title="Average Slope Degree",
+           fill="Degree(°)",
+           caption = "Data: Calgary Open Data") +
+      scale_fill_gradient(low = "#F7FBFF", high = "#08306B", guide = guide_colorbar(reverse = TRUE)) +
+      mapTheme
+    ```
+
+3.  **Summary of Landcover Permeability**
+
+    Landcover also affects the way water flows and is absorbed into the ground. For example, natural landcover such as grasslands and wetlands can help absorb and retain water and reduce the risk of flooding, so do storm ponds and other permeable surfaces. However, impermeable surfaces such as roads and buildings will increase the amount of runoff water. In the visualization, the darker the color, the more concentrated the impermeable surfaces are.
+
+    ```{r}
+    ggplot()+
+      geom_sf(data = final_fishnet,
+              aes(fill = landcover_scale))+
+      labs(title="Summary of Landcover Permeability",
+           fill="Index",
+           caption = "Data: Calgary Open Data") +
+      scale_fill_gradient(low = "#F7FBFF", high = "#08306B", guide = guide_colorbar(reverse = TRUE)) +
+      mapTheme
+    ```
+
+4.  **Summary of Soil Materials**
+
+    Despite the landcover, the materials of surface further determine the actual ability to absorb the runoff water. Specifically, clay and silt can contribute to soil compaction and soil subsidence, which further exacerbate flood risks in low-lying areas. Therefore, soil material is also used as a variable. In visualization, the darker the color, the higher impermeability of the material.
+
+```{r}
+ggplot()+
+  geom_sf(data = final_fishnet,
+          aes(fill = soil_material))+
+  labs(title="Summary of Soil Materials",
+       fill="Index",
+       caption = "Data: Calgary Open Data") +
+  scale_fill_gradient(low = "#F7FBFF", high = "#08306B", guide = guide_colorbar(reverse = TRUE)) +
+  mapTheme
+```
+
+The chart below shows that inundation occurs more in areas that are close to rivers, have high slopes degree, have a single soil type with low permeability.
+
+```{r}
+final_fishnet_nogeo <- st_drop_geometry(final_fishnet) %>%
+  dplyr::select(Inundation, Mean_Distance_to_River, average_slope_degree, landcover_scale, soil_material) %>%
+  gather(Variable, value, -Inundation) %>%
+  ggplot(aes(Inundation, value, fill=Inundation)) +
+  geom_bar(position = "dodge", 
+               stat = "summary", 
+               fun = "mean",
+               width = 0.6) + 
+  facet_wrap(~Variable, scales = "free") +
+  labs(x = "Inundation", 
+       y = "Value", 
+       title = "Feature associations with the likelihood of Flood Inundation ",
+       subtitle = "in Calgary, Canada",
+       caption = "Data: Calgary Open Data") +
+ guides(fill = guide_legend(title = "Flood Inundation")) + 
+  scale_fill_manual(values = c("#e8edbe", "#08306B")) +
+      theme_nice()
+
+final_fishnet_nogeo
+```
+
+# Regression Model
+
+We randomly allocate 70% of the final data to the training set and 30% to the testing set by `createDataPartition`. The train set has 569 rows and the test set has 243 rows. The Logistic regression is estimated with the `glm` function.
+
+```{r}
+final_data <- final_fishnet %>%
+  select(Unique_ID, OBJECTID, COUNT,AREA,Inundation,Mean_Distance_to_River, average_slope_degree,landcover_scale, soil_material) %>%
+  st_drop_geometry()
+
+set.seed(3456)
+trainIndex <- createDataPartition(final_data$Inundation, p = .70,list = FALSE, times = 1)
+```
+
+```{r}
+train <- final_data[trainIndex,]
+test <- final_data[-trainIndex,]
+
+dim(train)
+dim(test)
+```
+
+```{r}
+reg <- glm(Inundation ~ .,
+           data=train %>% 
+             dplyr::select(-Unique_ID, -OBJECTID, -COUNT,-AREA),
+           family="binomial" (link="logit"))
+```
+
+## Summary
+
+The table provides the estimated coefficients for each of the independent variables, along with their standard errors and significance levels.
+
+1.  `Mean_Distance_to_River` has a negative coefficient of -0.008, which means that as the distance to the nearest river increases, the probability of flood inundation decreases.
+
+2.  `average_slope_degree` has a positive coefficient of 0.520, which means that as the slope of the terrain increases, the probability of flood inundation also increases.
+
+3.  `landcover_scale` variable has a positive coefficient of 2.938, indicating that as the amount of impervious land cover (e.g., pavement, buildings) in a given area increases, the probability of flood inundation also increases.
+
+4.  `soil_material` has a negative coefficient of -3.181, which means that as the soil in a given area becomes more permeable, the probability of flood inundation decreases.
+
+Those four features are good predictor of flooding.
+
+The constant term in the model is 2.768, which represents the predicted log-odds of flood inundation when all of the independent variables are equal to zero. The AIC(Akaike Information Criterion) is a measure of the relative quality of a statistical model for a given set of data, with lower values indicating a better fit. The corrected AIC value for the model is 400.5, and the log likelihood is -195.206.
+
+```{r warning= FALSE, message=FALSE, results='asis'}
+stargazer(reg,
+                    type = "html",
+                    title = "Regression Models Predicting Flood Inundation Probability in Calgary, Alberta",
+                    column.labels = "Model",
+                    colnames = FALSE,
+                    add.lines = list(c("Corrected AIC", round(AICc(reg), 1))),
+out = "/Users/paprika/Desktop/Courses/2023spring/CPLN 675 Land Use/assignment3/table1.html")
+
+```
+
+## Correlation Matrix
+
+The resulting heatmap shows the Pearson correlation coefficients between the numeric variables. The color of each tile in the heatmap indicates the strength and direction of the correlation, with olive green indicating negative correlation, white indicating no correlation, and dark blue indicating positive correlation.
+
+We can tell from the matrix that soil material has significant negative relationship with inundation, the distance to rivers as well. And the average of slope degree has significant positive relationship with inundation.
+
+```{r}
+numeric_cols <- c("Inundation", "Mean_Distance_to_River", "average_slope_degree", "landcover_scale", "soil_material")
+
+train_numeric <- as.data.frame(lapply(train[numeric_cols], as.numeric))
+cor_matrix <- cor(train_numeric)
+melted_cor_matrix <- melt(cor_matrix)
+
+ggplot(data = melted_cor_matrix, 
+       aes(x = Var1, y = Var2, 
+           fill = value,
+           color = "white")) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "#e8edbe", 
+                       mid = "white", 
+                       high = "#08306B",
+                       midpoint = 0, 
+                       limit = c(-1,1), 
+                       space = "Lab",
+                       name="Pearson\nCorrelation") +
+  theme_nice() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1, vjust = 1),
+        axis.text.y = element_text(hjust = 1, vjust = 1),
+        plot.title = element_text(size = 20, 
+                                  hjust = 0.5),
+        plot.subtitle = element_text(size = 16, 
+                                     hjust = 0.5),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12)) +
+  labs(x = "", y = "") 
+
+```
+
+## Classification Probabilities
+
+The resulting histogram shows the frequency distribution of the classification probabilities for for `Inundation` and `No Inundation`.
+
+```{r}
+classProbs <- predict(reg, test, type="response")
+ggplot(data.frame(prob = classProbs), aes(x = prob)) +
+  geom_histogram(binwidth = 0.05, 
+                 fill = "#e8edbe", 
+                 color = "#08306B", 
+                 width = 0.2) +
+  labs(title = "Histogram of Class Probabilities", x = "Probability", y = "Frequency") +
+  theme_nice()
+```
+
+```{r}
+testProbs <- data.frame(obs = as.factor(test$Inundation),
+                        pred = classProbs)
+
+head(testProbs)
+```
+
+The 'hump' of predicted probabilities for `No Inundation` clusters around 0 with a long tail, and the 'hump' of predicted probabilities for `Inundation` clusters around 1 on the x-axis. It shows that our model is quite predictive.
+
+```{r}
+
+ggplot(testProbs, aes(x = pred, fill=as.factor(obs))) + 
+  geom_density() +
+  facet_grid(obs ~ .) + 
+  xlab("Probability") + 
+  geom_vline(xintercept = .5) +
+  scale_fill_manual(values = c("#e8edbe","#08306B"),
+                    labels = c("No Inundation","Inundation"),
+                    name = "") +
+  labs(title = "Distribution of Predicted Probabilities for Inundation vs. No Inundation",
+       x = "Probability", y = "Density") +
+  theme_nice()
+```
+
+## Confusion Matrix
+
+A variable called `predOutcome` is created that classifies any predicted probability greater than 0.50 (or 50%) as a predicted inundation event. 50% seems like a reasonable threshold to start with.
+
+1.  Predicted = 0, Observed = 0 ---\> **True Negative**
+
+    The model correctly predicted instances belong to the negative class.
+
+2.  Predicted = 1, Observed = 1 ---\> **True Positive**
+
+    The model correctly predicted instances belong to the positive class.
+
+3.  Predicted = 1, Observed = 0 ---\> **False Positive**
+
+    The model incorrectly predicted instances belong to the positive class.
+
+4.  Predicted = 0, Observed = 1 ---\> **False Negative**
+
+    The model incorrectly predicted that 15 instances belong to the negative class.
+
+5.  **Sensitivity** - the proportion of actual positives (1's) that were predicted to be positive. Also known as "true positive rate".
+
+6.  **Specificity** - The proportion of actual negatives (0's) that were predicted to be negatives. Also known as "true negative rate".
+
+The matrix shows the number of correct and incorrect predictions for each class. From the confusion matrix, we know that there are 157 cells with true negative, 42 cells with true positive, 15 cells with false positive and 29 cells with false negative. Meanwhile, the value of model sensitivity is 0.5915, meaning it correctly identified 59.15% of the positive cases (actual 1s), and model specificity is 0.9128, meaning it correctly identified 91.28% of the negative cases (actual 0s).
+
+The overall accuracy of the model is 0.8189, meaning it correctly classified 81.89% of the observations. The 95% confidence interval (CI) suggests that the true accuracy lies between 0.7646 and 0.8652. The model has a significantly higher accuracy than NIR, with a p-value of 0.00004793. The Kappa statistic is 0.5353, which measures the agreement between the actual and predicted classes beyond chance. A Kappa of 1 indicates perfect agreement, and a Kappa of 0 indicates chance agreement. A Kappa of 0.5353 is moderate agreement.
+
+```{r}
+testProbs$predOutcome  = ifelse(testProbs$pred > .5 ,1,0)
+
+caret::confusionMatrix(reference = as.factor(testProbs$obs),
+                       data = as.factor(testProbs$predOutcome), 
+                       positive = "1")
+```
+
+## ROC Curve
+
+The ROC curve, gives us another visual \"goodness of fit\" metric. What I want is to have a curve that is \"above\" the y=x line. The y-axis of the ROC curve shows the rate of true positives for each threshold from 0 to 1. The x-axis shows the rate of false positives for each threshold.
+
+In this case, an AUC (he area under ROC curve) of 0.8867 indicates that the model has a relatively high ability to distinguish between the positive and negative classes, and can classify new observations with a high degree of accuracy.
+
+```{r warning=FALSE}
+ggplot(testProbs, aes(d = as.numeric(obs), m = pred)) + 
+  geom_roc(n.cuts = 50, 
+           labels = FALSE,
+           color = "#08306B") + 
+  geom_abline(slope = 1, 
+              intercept = 0, 
+              size = 1.5, 
+              color = '#e8edbe') +
+  labs(title = "ROC Curve",
+       x = "False Positive Fraction",
+       y = "True Positive Fraction") +
+  theme_nice()
+```
+
+```{r}
+pROC::auc(testProbs$obs, testProbs$pred)
+```
+
+# Cross Validation
+
+This step is to use the tool -- cross validation to resample the different part of dataset on different iterations. In this case, the model is trained on 812 samples and is subjected to cross-validation using 100 folds.
+
+```{r}
+ctrl <- trainControl(method = "cv", 
+                     number = 100, 
+                     savePredictions = TRUE)
+
+cvFit <- train(Inundation ~ .,  
+               data = final_data %>% 
+                 as.data.frame() %>%
+                 dplyr::select(-Unique_ID, -OBJECTID, -COUNT,-AREA),
+               method="glm", 
+               family="binomial",
+               trControl = ctrl)
+cvFit$resample
+```
+
+From the summary above, we know that the accuracy ranges from 0.5 to 1.0 with a mean of 0.8 and the Kappa statistic ranges from -0.23 to 1.0 with a mean of 0.54. Based on these results, it seems that the model's performance varies widely across different folds, with some folds achieving perfect agreement (Kappa=1). It's possible that the model is overfitting to some of the folds, which can cause the performance to vary widely.
+
+```{r warning=FALSE}
+dplyr::select(cvFit$resample, -Resample) %>%
+  gather(metric, value) %>%
+  left_join(gather(cvFit$results[2:4], metric, mean)) %>%
+  ggplot(aes(value)) + 
+    geom_histogram(bins=30, fill = "#e8edbe") +
+    facet_wrap(~metric) +
+    geom_vline(aes(xintercept = mean), color = "#08306B", linetype = 1, size = 0.5) +
+    scale_x_continuous(limits = c(0, 1)) +
+    labs(x="Goodness of Fit", y="Count", title="CV Goodness of Fit Metrics",
+         subtitle = "Across-fold mean reprented as lines") +
+  theme_nice()
+```
+
+The result of the cross validation shows that the model has an accuracy of 0.8336, which means that it correctly classified approximately 83% of the samples. The kappa value of 0.5503 indicates that the model's performance is better than chance, and there is moderate agreement between predicted and actual classes. The large number of folds suggests that the model is well-tested and more reliable in its predictions.
+
+```{r}
+cvFit
+```
+
+# Prediction Map
+
+In this step, we are going to predict for the entire dataset , assess our predictions, and create some maps. This fishnet map shows that the areas with a higher probability of flooding are concentrated in the central and western parts of the city along the rivers, where the slope is steeper and also closer to the waterbodies. And in some areas in the east where the ground cover is less permeable and closer to water bodies, there is also a certain probability of flood inundation.
+
+```{r}
+final_data_sf <- final_fishnet %>%
+  select(Unique_ID, OBJECTID, COUNT,AREA,Inundation,Mean_Distance_to_River, average_slope_degree,landcover_scale, soil_material)
+
+allPredictions <- 
+  predict(cvFit, final_data_sf, type="prob")[,2]
+  
+final_data_sf <- 
+  cbind(final_data_sf, allPredictions) %>%
+  mutate(allPredictions = round(allPredictions * 100)) 
+```
+
+```{r}
+ggplot() + 
+    geom_sf(data=final_data_sf, 
+            aes(fill=factor(ntile(allPredictions,5))), 
+            colour="white",
+            size=0.8) +
+    scale_fill_manual(values = c("#d1d6c5", "#E8EDBE","#c5cbe0", "#3b588f", "#08306B"),
+                      labels=as.character(quantile(final_data_sf$allPredictions,
+                                                   c(0.1,.2,.4,.6,.8),
+                                                   na.rm=T)),
+                      name="Predicted\nProbabilities(%)\n(Quintile\nBreaks)") +
+  mapTheme +
+  labs(title="Spatial Distribution of Predicted Probabilities",
+       subtitle = "in Calgary, Alberta",
+       caption = "Data: Calgary Open Data")
+```
+
+The map indicates the spatial distribution of confusion matrix. The model has a good prediction in areas closer to water bodies with steeper slope.
+
+```{r}
+final_data_sf %>%
+  mutate(confResult=case_when(allPredictions < 50 & Inundation==0 ~ "True_Negative",
+                              allPredictions >= 50 & Inundation==1 ~ "True_Positive",
+                              allPredictions < 50 & Inundation==1 ~ "False_Negative",
+                              allPredictions >= 50 & Inundation==0 ~ "False_Positive")) %>%
+  ggplot()+
+  geom_sf(aes(fill = confResult), 
+          color = "white",
+          size = 0.8)+
+  scale_fill_manual(values = c("#08306B","#9da7c9", "#c5cbe0", "#E8EDBE"),
+                    name="Outcomes")+
+  labs(title="Confusion Metrics",
+       subtitle = "in Calgary, Alberta",
+       caption = "Data: Calgary Open Data") +
+  mapTheme
+```
+
+# Comparable City
+
+It is necessary to consider the climate and hydrology condition when picking up a comparable city. Pittsburgh in Pennsylvania is located in the northeastern United States. with a humid continental climate. The city is also located at the confluence of three rivers: the Allegheny, the Monongahela, and the Ohio, making it a riverine city. Flooding in Pittsburgh is primarily caused by heavy rainfall events and snowmelt. Both Pittsburgh and Calgary are riverine cities that are prone to flooding caused by heavy rainfall. Therefore, we pick up this city as our validation comparable city.
+
+## Pittsburgh - Fishnet
+
+Similarly, we create the fishnet dataset for Pittsburgh and complete feature engineering in arcgis pro.
+
+```{r message=FALSE}
+p_boundary <- st_read("/Users/paprika/Desktop/Courses/2023spring/CPLN 675 Land Use/assignment3/comparable city/Boundary/Pittsburgh.shp")  %>%
+  st_transform(crs = 4326)
+
+p_hydrology <- st_read("/Users/paprika/Desktop/Courses/2023spring/CPLN 675 Land Use/assignment3/comparable city/alcogisallegheny-county-hydrology-areas/Hydrology_Areas.shp") %>%
+  st_transform(crs = 4326)
+
+p_fishnet <- st_read("/Users/paprika/Desktop/Courses/2023spring/CPLN 675 Land Use/assignment3/comparable city/p_fishnet/fishnet.shp") %>%
+  st_transform(crs = 4326)
+
+p_fishnet <- rename(p_fishnet, average_slope_degree = MEAN) 
+p_fishnet <- rename(p_fishnet, landcover_scale = MEAN_1) 
+p_fishnet <- rename(p_fishnet, soil_material = MEAN_12)
+p_fishnet <- rename(p_fishnet, Mean_Distance_to_River = MEAN_12_13)
+```
+
+```{r warning=FALSE}
+fishnet <- 
+  st_make_grid(p_boundary,
+               cellsize = 0.005, 
+               square = TRUE) %>%
+  .[p_boundary] %>%
+  st_sf() %>%
+  mutate(uniqueID = rownames(.))
+
+fishnet_boundary <- st_union(fishnet)
+```
+
+```{r warning=FALSE}
+p_fishnet <- st_intersection(p_fishnet, fishnet_boundary)
+```
+
+```{r}
+a <- ggplot()+
+  geom_sf(data = p_fishnet,
+          aes(fill = Mean_Distance_to_River),
+          color="white") +
+  geom_sf(data = fishnet_boundary,
+          color="black",
+          fill="transparent") +
+  labs(title="Average Distance to River",
+       fill="Distance") +
+  scale_fill_gradient(low = "#bcc47a", high = "#F7FBFF", guide = guide_colorbar(reverse = TRUE)) +
+  mapTheme +
+  theme(plot.title = element_text(size = 10),
+        legend.title = element_text(size = 6))
+```
+
+```{r}
+b <- ggplot()+
+  geom_sf(data = p_fishnet,
+          aes(fill = average_slope_degree),
+          color="white")+
+  geom_sf(data = fishnet_boundary,
+          color="black",
+          fill="transparent") +
+  labs(title="Average Slope Degree",
+       fill="Degree(°)") +
+  scale_fill_gradient(low = "#F7FBFF", high = "#bcc47a", guide = guide_colorbar(reverse = TRUE)) +
+  mapTheme +
+  theme(plot.title = element_text(size = 10),
+        legend.title = element_text(size = 6))
+```
+
+```{r}
+c <- ggplot()+
+  geom_sf(data = p_fishnet,
+          aes(fill = landcover_scale),
+          color="white")+
+  geom_sf(data = fishnet_boundary,
+          color="black",
+          fill="transparent") +
+  labs(title="Summary of Landcover Permeability",
+       fill="Index") +
+  scale_fill_gradient(low = "#F7FBFF", high = "#bcc47a", guide = guide_colorbar(reverse = TRUE))+
+  mapTheme +
+  theme(plot.title = element_text(size = 10),
+        legend.title = element_text(size = 6))
+```
+
+```{r}
+d <- ggplot()+
+  geom_sf(data = p_fishnet,
+          aes(fill = soil_material),
+          color="white")+
+  geom_sf(data = fishnet_boundary,
+          color="black",
+          fill="transparent") +
+  labs(title="Summary of Soil Material",
+       fill="Index") +
+  scale_fill_gradient(low = "#F7FBFF", high = "#bcc47a", guide = guide_colorbar(reverse = TRUE)) +
+  mapTheme +
+  theme(plot.title = element_text(size = 10),
+        legend.title = element_text(size = 8))
+```
+
+## Pittsburgh - Features
+
+Among these four features, the darker the color indicates the closer the distance to the water body, the larger the slope degree, the ground cover permeability is approximately lower, and the soil material permeability is lower.
+
+```{r warning=FALSE, message=FALSE}
+ggarrange(a,b,c,d,
+          ncol = 2, 
+          nrow = 2) 
+```
+
+```{r}
+p_data <- p_fishnet %>%
+  select(Mean_Distance_to_River, average_slope_degree,landcover_scale, soil_material) 
+```
+
+## Pittsburgh - Prediction Map
+
+Similar with Calgary, the resulting forecast map shows that the high probability of flooding is concentrated along the Monongahela, Allegheny and Ohio rivers. The average of probability is 0.6190202. 25% of the predictions fall below 0.0708185, meanwhile 75% of the predictions fall below 0.9905759.
+
+```{r}
+p_data$predicted <- predict(reg, newdata = p_data, type = "response")
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = p_data, 
+          aes(fill = predicted), 
+          color = "transparent") +
+  geom_sf(data = p_fishnet,
+          color="white",
+          fill="transparent") +
+  geom_sf(data = fishnet_boundary,
+          color="black",
+          fill="transparent") +
+  geom_sf(data = p_hydrology,
+          fill="#08306B",
+          color="#08306B",
+          alpha = 0.3) +
+  scale_fill_gradientn(colors = c("#F7FBFF", "#bcc47a"),
+                       name = "Predicted Probabilities") +
+  labs(title = "Flood Inundation Probability in Pittsburgh, PA",
+       caption = "Data: Pittsburgh Open Data") +
+  mapTheme +
+ coord_sf(xlim = c(-80.11, -79.85), 
+          ylim = c(40.35, 40.51))
+```
+
+```{r}
+summary(p_data$predicted)
+```
