@@ -1,6 +1,7 @@
 # Flood Inundation Probability Forecast
-A predictive model for flood risks in Calgary, Canada, with further application to estimating flood probability for Pittsburgh, PA
+## A predictive model for flood risks in Calgary, Canada, with further application to estimating flood probability for Pittsburgh, PA
 Youtube link: https://www.youtube.com/watch?v=l8quCz-AnGw
+Ling & Haobing
 
 Floods are one of the most devastating natural disasters, causing widespread damage to communities and infrastructure. As the frequency and intensity of extreme weather events increase, there is a growing need for effective flood risk management strategies. This is where flood inundation analysis comes in.
 
